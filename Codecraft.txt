@@ -1,0 +1,154 @@
+CODECRAFT - TECHNICAL DOCUMENTATION
+
+PROJECT OVERVIEW
+- Problem solved: browser-based playground for running code remotely, sharing snippets, and enabling community interaction around code execution and reuse.
+- Target users: developers who want a quick in-browser code runner plus a way to share and discuss snippets.
+- Core functions:
+  - Run code remotely via Judge0.
+  - Persist execution history.
+  - Publish, browse, comment on, and star snippets.
+  - Authenticate users with Clerk and enforce identity in Convex.
+
+ARCHITECTURE
+- Style: single Next.js App Router frontend with a backend-as-a-service model through Convex; no custom Next.js API routes.
+- Client/server split:
+  - UI and state: src/app/**, src/components/**, src/store/useCodeEditorStore.ts
+  - Data and auth enforcement: convex/*.ts
+  - Remote execution: Judge0 HTTP API from src/lib/judge0.ts
+- Folder responsibilities:
+  - src/app/(root): editor UI and controls (EditorPanel.tsx, OutputPanel.tsx, Header.tsx)
+  - src/app/snippets: snippet list/detail views and comments
+  - src/app/profile: profile, stats, execution history
+  - src/components: shared UI components (NavigationHeader.tsx, Footer.tsx, LoginButton.tsx)
+  - src/store: client state (Zustand)
+  - convex: schema, queries, mutations, webhook handler
+
+TECH STACK
+- Languages: TypeScript (frontend + Convex), CSS via Tailwind.
+- Frameworks and libraries:
+  - Next.js 15 + React 18 (App Router)
+  - Convex (serverless DB, queries, mutations, HTTP actions)
+  - Clerk (auth and identity)
+  - Monaco Editor (code editing)
+  - Zustand (client state)
+  - Framer Motion (UI animation)
+  - react-syntax-highlighter (code rendering)
+
+CORE COMPONENTS AND FLOWS
+
+Editor and execution flow
+- State and logic: src/store/useCodeEditorStore.ts
+  - Tracks language, theme, fontSize, editor, output, error, isRunning, executionResult.
+  - Persists theme/font size and per-language code in localStorage.
+  - runCode() calls executeCode in src/lib/judge0.ts.
+- UI:
+  - EditorPanel.tsx renders Monaco editor.
+  - OutputPanel.tsx displays stdout/stderr with copy support.
+  - RunButton.tsx triggers runCode and saves execution results.
+- Execution persistence:
+  - RunButton.tsx calls api.codeExecutions.saveExecution for signed-in users.
+  - convex/codeExecutions.ts stores records with userId from ctx.auth.getUserIdentity().
+
+Snippet creation, browsing, and interaction
+- Create: ShareSnippetDialog.tsx calls api.snippets.createSnippet.
+- Browse: src/app/snippets/page.tsx queries api.snippets.getSnippets and filters in-memory.
+- Detail: src/app/snippets/[id]/page.tsx shows read-only Monaco + comments.
+- Stars: StarButton.tsx toggles and displays star state via convex/snippets.ts.
+
+Comments
+- Rendering: CommentContent.tsx parses code fences and uses CodeBlock.tsx.
+- Add/Delete: CommentForm.tsx and Comments.tsx call addComment/deleteComment.
+- Enforcement: convex/snippets.ts restricts deletion to the author.
+
+Profile and analytics
+- Profile page fetches user data, stats, and execution history.
+- getUserStats in convex/codeExecutions.ts aggregates executions and starred snippets.
+- usePaginatedQuery on profile page loads execution history.
+
+Auth and user sync
+- ClerkProvider wraps the app in src/app/layout.tsx.
+- src/middleware.ts applies Clerk auth for all routes.
+- convex/http.ts handles /clerk-webhook and calls api.users.syncUser on user.created.
+- Fallback: convex/snippets.ts auto-creates the user record if webhook sync is missing.
+
+ALGORITHMS AND LOGIC
+- Language switching: save current code in localStorage before switching.
+- Execution flow: runCode maps stdout/stderr/compile_output to output and error states.
+- Client-side filtering: snippets list filtered by title/language/userName in-memory.
+- Stats aggregation: getUserStats reduces execution records and stars to compute counts.
+- Comment parsing: regex split on code fences; render code blocks when found.
+
+DATA MODEL (CONVEX)
+- users: userId, email, name (indexed by userId)
+- codeExecutions: userId, language, code, output, error (indexed by userId)
+- snippets: userId, title, language, code, userName (indexed by userId)
+- snippetComments: snippetId, userId, userName, content (indexed by snippetId)
+- stars: userId, snippetId (indexes by userId, snippetId, and userId+snippetId)
+
+API DESIGN (CONVEX)
+- Mutations:
+  - codeExecutions.saveExecution(language, code, output?, error?)
+  - snippets.createSnippet(title, language, code)
+  - snippets.deleteSnippet(snippetId)
+  - snippets.addComment(snippetId, content)
+  - snippets.deleteComment(commentId)
+  - snippets.starSnippet(snippetId)
+  - users.syncUser(userId, email, name)
+- Queries:
+  - codeExecutions.getUserExecutions(userId, paginationOpts)
+  - codeExecutions.getUserStats(userId)
+  - snippets.getSnippets()
+  - snippets.getSnippetById(snippetId)
+  - snippets.getComments(snippetId)
+  - snippets.isSnippetStarred(snippetId)
+  - snippets.getSnippetStarCount(snippetId)
+  - snippets.getStarredSnippets()
+  - users.getUser(userId)
+- HTTP endpoint:
+  - POST /clerk-webhook in convex/http.ts (Svix signature verification, user.created handling)
+
+PERFORMANCE AND SCALABILITY
+- Monaco is client-only; useMounted avoids hydration mismatch.
+- Skeleton UIs used for editor and snippets page loading states.
+- Convex indexes support efficient access for users, stars, and comments.
+- Client-side snippet filtering becomes expensive at scale; move to server-side queries with pagination.
+
+SECURITY
+- All write operations in Convex require ctx.auth.getUserIdentity().
+- Comment deletion restricted to the author.
+- Webhook validation uses Svix signature verification with CLERK_WEBHOOK_SECRET.
+- Comment content stored as raw string; no explicit server-side sanitization.
+
+TESTING
+- No unit or integration tests present in the repository.
+
+DEVOPS AND CONFIGURATION
+- Scripts: npm run dev, build, start, lint.
+- TypeScript config: tsconfig.json uses strict mode and Next.js plugin.
+- Tailwind/PostCSS: tailwind.config.ts and postcss.config.mjs.
+- Environment variables:
+  - NEXT_PUBLIC_CONVEX_URL (Convex client)
+  - NEXT_PUBLIC_JUDGE0_URL (Judge0 API base)
+  - CLERK_WEBHOOK_SECRET (Svix webhook verification)
+
+STRENGTHS
+- Clear separation of UI, state, and data layers.
+- Sensible data modeling with indexes.
+- Auth enforcement on server-side mutations.
+- UX polish: skeleton loading states, copy buttons, filtered lists.
+
+POTENTIAL IMPROVEMENTS
+- Server-side search/filtering for snippets.
+- Rate limiting for Judge0 calls and snippet/comment creation.
+- Comment content sanitization and validation.
+- Structured logging for webhook and execution errors.
+- Add tests for Convex mutations and critical UI flows.
+
+INTERVIEW PITCH (1-2 MINUTES)
+Codecraft is a Next.js App Router app that lets developers write code in Monaco, execute it remotely via Judge0, and share snippets with comments and stars. Authentication is provided by Clerk, and all persistence is handled by Convex with reactive queries and identity-aware mutations. The editor state is managed in a Zustand store, runCode calls Judge0, output is rendered in the UI, and executions are saved to Convex for profile analytics. Snippets, comments, and stars are fully Convex-backed with proper auth checks and indexing.
+
+INTERVIEW FOLLOW-UP QUESTIONS
+- How would you scale snippet search and filtering? Move filtering to server-side queries with indexes and pagination.
+- How would you secure and rate-limit remote execution? Add per-user quotas, validation, queueing, and timeouts.
+- How would you test Convex mutations and the editor flow? Unit tests for server logic and Playwright for UI flows.
+- How would you evolve into multi-tenant? Add org/workspace models, RBAC, and audit logs.
